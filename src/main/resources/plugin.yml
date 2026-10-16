@@ -1,0 +1,22 @@
+name: MarblesOPAHAbilities
+version: 1.0.0
+main: dev.marbles.opah.MarblesPlugin
+api-version: '1.21'
+description: 10 elements, 2 abilities + passive each, energy marbles, rerolls, trader, deathban, HUD.
+commands:
+  withdraw:
+    description: Withdraw energy as an Energy Marble
+    usage: /withdraw [amount]
+  reroll:
+    description: Reroll your element
+    usage: /reroll
+    permission: marbles.reroll
+  marbles:
+    description: Admin commands
+    usage: /marbles <element|energy|give|reroll|revive|reload> ...
+    permission: marbles.admin
+permissions:
+  marbles.admin:
+    default: op
+  marbles.reroll:
+    default: op
