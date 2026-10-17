@@ -35,8 +35,6 @@ import org.bukkit.event.player.PlayerMoveEvent;
 import org.bukkit.event.player.PlayerSwapHandItemsEvent;
 import org.bukkit.inventory.EquipmentSlot;
 import org.bukkit.inventory.ItemStack;
-import org.bukkit.inventory.Merchant;
-import org.bukkit.inventory.MerchantRecipe;
 import org.bukkit.inventory.meta.ItemMeta;
 import org.bukkit.persistence.PersistentDataType;
 import org.bukkit.plugin.java.JavaPlugin;
@@ -157,7 +155,7 @@ public final class MarblesPlugin extends JavaPlugin implements Listener {
         if (disabled.getOrDefault(p.getUniqueId(), 0L) > now) { p.sendMessage(msg("Your abilities are disabled!", NamedTextColor.RED)); return; }
         long[] c = cd.computeIfAbsent(p.getUniqueId(), k -> new long[2]);
         if (c[slot] > now) return;
-        if (Abilities.cast(p, el, slot)) c[slot] = now + el.cooldown(slot) * 1000L;
+        if (Abilities.cast(p, el, slot)) { c[slot] = now + el.cooldown(slot) * 1000L; Flair.cast(p, el, slot); }
         else p.sendMessage(msg("No target in range.", NamedTextColor.GRAY));
     }
 
@@ -337,7 +335,7 @@ public final class MarblesPlugin extends JavaPlugin implements Listener {
         return n;
     }
 
-    // ---------- items: Energy Marble / Element Reroller / Marble Trader ----------
+    // ---------- items: Energy Marble / Element Reroller ----------
     ItemStack item(String type, int n) {
         Material mat = Material.matchMaterial(getConfig().getString("items.material", "PLAYER_HEAD"));
         ItemStack it = new ItemStack(mat == null ? Material.PLAYER_HEAD : mat, n);
@@ -345,7 +343,6 @@ public final class MarblesPlugin extends JavaPlugin implements Listener {
         String name, lore, model; NamedTextColor col;
         switch (type) {
             case "reroller" -> { name = "Element Reroller"; lore = "Right-click to reroll your element."; model = "element_reroller"; col = NamedTextColor.LIGHT_PURPLE; }
-            case "trader" -> { name = "Marble Trader"; lore = "Right-click to trade."; model = "marble_trader"; col = NamedTextColor.GOLD; }
             default -> { name = "Energy Marble"; lore = "Right-click to gain 1 energy."; model = "energy_marble"; col = NamedTextColor.AQUA; }
         }
         m.displayName(Component.text(name, col).decoration(TextDecoration.ITALIC, false));
@@ -383,43 +380,8 @@ public final class MarblesPlugin extends JavaPlugin implements Listener {
                 if (getConfig().getBoolean("join-animation.play-on-reroll", true)) playRoll(p, n);
                 p.sendMessage(msg("Rerolled! You are now " + n.display + " (F = " + n.a1 + ", Shift+F = " + n.a2 + ").", NamedTextColor.LIGHT_PURPLE));
             }
-            case "trader" -> {
-                if (openTrader(p) && getConfig().getBoolean("trader.consume-on-use", false)) it.setAmount(it.getAmount() - 1);
-            }
             default -> { }
         }
-    }
-
-    int toInt(Object o, int def) { return o instanceof Number n ? n.intValue() : def; }
-
-    ItemStack parseResult(Map<?, ?> m) {
-        String r = String.valueOf(m.get("result")); int n = toInt(m.get("amount"), 1);
-        if (r.equalsIgnoreCase("energy") || r.equalsIgnoreCase("reroller") || r.equalsIgnoreCase("trader")) return item(r.toLowerCase(), n);
-        Material mat = Material.matchMaterial(r);
-        return mat == null ? null : new ItemStack(mat, n);
-    }
-
-    boolean openTrader(Player p) {
-        List<MerchantRecipe> rs = new ArrayList<>();
-        for (Map<?, ?> m : getConfig().getMapList("trader.trades")) {
-            ItemStack res = parseResult(m);
-            if (res == null) continue;
-            MerchantRecipe r = new MerchantRecipe(res, 0, toInt(m.get("max-uses"), 5), false);
-            r.setIgnoreDiscounts(true);
-            if (m.get("cost") instanceof List<?> cl) for (Object o : cl) {
-                if (r.getIngredients().size() >= 2) break;
-                if (o instanceof Map<?, ?> cm) {
-                    Material mat = Material.matchMaterial(String.valueOf(cm.get("item")));
-                    if (mat != null) r.addIngredient(new ItemStack(mat, toInt(cm.get("amount"), 1)));
-                }
-            }
-            if (!r.getIngredients().isEmpty()) rs.add(r);
-        }
-        if (rs.isEmpty()) { p.sendMessage(msg("The trader has nothing to offer.", NamedTextColor.RED)); return false; }
-        Merchant mer = Bukkit.createMerchant(Component.text(getConfig().getString("trader.title", "Marble Trader")));
-        mer.setRecipes(rs);
-        p.openMerchant(mer, true);
-        return true;
     }
 
     // ---------- commands ----------
@@ -475,7 +437,7 @@ public final class MarblesPlugin extends JavaPlugin implements Listener {
                 s.sendMessage(t.getName() + " energy: " + energy(t));
             }
             case "give" -> {
-                if (a.length < 2 || !List.of("energy", "reroller", "trader").contains(a[1].toLowerCase())) { s.sendMessage("Usage: /marbles give <energy|reroller|trader> [amount] [player]"); return true; }
+                if (a.length < 2 || !List.of("energy", "reroller").contains(a[1].toLowerCase())) { s.sendMessage("Usage: /marbles give <energy|reroller> [amount] [player]"); return true; }
                 int n = 1;
                 if (a.length > 2) { try { n = Math.max(1, Math.min(64, Integer.parseInt(a[2]))); } catch (NumberFormatException x) { n = 1; } }
                 Player t = who(s, a, 3);
@@ -498,7 +460,7 @@ public final class MarblesPlugin extends JavaPlugin implements Listener {
         if (a.length == 1) return List.of("element", "energy", "give", "reroll", "revive", "reload");
         if (a.length == 2 && a[0].equalsIgnoreCase("element")) return Arrays.stream(Element.values()).map(x -> x.name().toLowerCase()).toList();
         if (a.length == 2 && a[0].equalsIgnoreCase("energy")) return List.of("set", "add");
-        if (a.length == 2 && a[0].equalsIgnoreCase("give")) return List.of("energy", "reroller", "trader");
+        if (a.length == 2 && a[0].equalsIgnoreCase("give")) return List.of("energy", "reroller");
         return null;
     }
 }
