@@ -5,6 +5,9 @@ import net.kyori.adventure.text.Component;
 import net.kyori.adventure.text.format.NamedTextColor;
 import net.kyori.adventure.text.format.TextColor;
 import net.kyori.adventure.text.format.TextDecoration;
+import net.kyori.adventure.title.Title;
+import org.bukkit.Particle;
+import org.bukkit.Sound;
 import org.bukkit.Bukkit;
 import org.bukkit.Location;
 import org.bukkit.Material;
@@ -32,14 +35,13 @@ import org.bukkit.event.player.PlayerMoveEvent;
 import org.bukkit.event.player.PlayerSwapHandItemsEvent;
 import org.bukkit.inventory.EquipmentSlot;
 import org.bukkit.inventory.ItemStack;
-import org.bukkit.inventory.Merchant;
-import org.bukkit.inventory.MerchantRecipe;
 import org.bukkit.inventory.meta.ItemMeta;
 import org.bukkit.persistence.PersistentDataType;
 import org.bukkit.plugin.java.JavaPlugin;
 import org.bukkit.potion.PotionEffect;
 import org.bukkit.potion.PotionEffectType;
 
+import java.time.Duration;
 import java.util.*;
 
 public final class MarblesPlugin extends JavaPlugin implements Listener {
@@ -153,7 +155,7 @@ public final class MarblesPlugin extends JavaPlugin implements Listener {
         if (disabled.getOrDefault(p.getUniqueId(), 0L) > now) { p.sendMessage(msg("Your abilities are disabled!", NamedTextColor.RED)); return; }
         long[] c = cd.computeIfAbsent(p.getUniqueId(), k -> new long[2]);
         if (c[slot] > now) return;
-        if (Abilities.cast(p, el, slot)) c[slot] = now + el.cooldown(slot) * 1000L;
+        if (Abilities.cast(p, el, slot)) { c[slot] = now + el.cooldown(slot) * 1000L; Flair.cast(p, el, slot); }
         else p.sendMessage(msg("No target in range.", NamedTextColor.GRAY));
     }
 
@@ -281,10 +283,46 @@ public final class MarblesPlugin extends JavaPlugin implements Listener {
 
     @EventHandler public void onJoin(PlayerJoinEvent e) {
         Player p = e.getPlayer();
-        if (element(p) != null) return;
-        p.getPersistentDataContainer().set(kEnergy, PersistentDataType.INTEGER, ci("start-energy"));
-        Element el = reroll(p, false);
-        p.sendMessage(msg("You are bound to " + el.display + ". F = " + el.a1 + ", Shift+F = " + el.a2 + ".", NamedTextColor.GOLD));
+        boolean first = element(p) == null;
+        if (first) {
+            p.getPersistentDataContainer().set(kEnergy, PersistentDataType.INTEGER, ci("start-energy"));
+            Element el = reroll(p, false);
+            p.sendMessage(msg("You are bound to " + el.display + ". F = " + el.a1 + ", Shift+F = " + el.a2 + ".", NamedTextColor.GOLD));
+        }
+        Element mine = element(p);
+        if (getConfig().getBoolean("join-animation.enabled", true) && (first || getConfig().getBoolean("join-animation.every-join", true)))
+            Bukkit.getScheduler().runTaskLater(this, () -> playRoll(p, mine), ci("join-animation.start-delay-ticks"));
+    }
+
+    static final NamedTextColor[] COLORS = {NamedTextColor.RED, NamedTextColor.BLUE, NamedTextColor.LIGHT_PURPLE, NamedTextColor.GOLD,
+            NamedTextColor.AQUA, NamedTextColor.DARK_AQUA, NamedTextColor.DARK_PURPLE, NamedTextColor.GREEN, NamedTextColor.YELLOW, NamedTextColor.DARK_RED};
+
+    /** Slot-machine style roll: the element icons flip by on screen, slow down, and land on the result. */
+    void playRoll(Player p, Element result) {
+        if (!p.isOnline() || result == null) return;
+        int[] gaps = {2, 2, 2, 2, 3, 3, 3, 4, 4, 5, 6, 7, 9};
+        Element[] all = Element.values(); Random rnd = new Random(); Element[] last = {null};
+        long t = 0;
+        for (int i = 0; i < gaps.length; i++) {
+            t += gaps[i];
+            final int idx = i; final boolean fin = i == gaps.length - 1;
+            Bukkit.getScheduler().runTaskLater(this, () -> {
+                if (!p.isOnline()) return;
+                Element show = result;
+                if (!fin) do { show = all[rnd.nextInt(all.length)]; } while (show == last[0] || (idx == gaps.length - 2 && show == result));
+                last[0] = show;
+                Component icon = Component.text(String.valueOf((char) (0xE000 + show.ordinal())), NamedTextColor.WHITE).font(FONT);
+                Component sub = fin
+                        ? Component.text("You are bound to ", NamedTextColor.GRAY).append(Component.text(show.display, COLORS[show.ordinal()], TextDecoration.BOLD))
+                        : Component.text("Rolling...", NamedTextColor.GRAY);
+                p.showTitle(Title.title(icon, sub, Title.Times.times(Duration.ZERO, Duration.ofMillis(fin ? 2500 : 600), Duration.ofMillis(fin ? 600 : 0))));
+                if (fin) {
+                    p.playSound(p.getLocation(), Sound.ENTITY_PLAYER_LEVELUP, 1f, 1.2f);
+                    p.playSound(p.getLocation(), Sound.BLOCK_NOTE_BLOCK_CHIME, 1f, 1.5f);
+                    p.getWorld().spawnParticle(Particle.TOTEM_OF_UNDYING, p.getLocation().add(0, 1, 0), 40, 0.4, 0.6, 0.4, 0.3);
+                } else p.playSound(p.getLocation(), Sound.BLOCK_NOTE_BLOCK_HAT, 1f, 0.8f + 0.05f * idx);
+            }, t);
+        }
     }
 
     Element reroll(Player p, boolean avoidSame) {
@@ -297,7 +335,7 @@ public final class MarblesPlugin extends JavaPlugin implements Listener {
         return n;
     }
 
-    // ---------- items: Energy Marble / Element Reroller / Marble Trader ----------
+    // ---------- items: Energy Marble / Element Reroller ----------
     ItemStack item(String type, int n) {
         Material mat = Material.matchMaterial(getConfig().getString("items.material", "PLAYER_HEAD"));
         ItemStack it = new ItemStack(mat == null ? Material.PLAYER_HEAD : mat, n);
@@ -305,7 +343,6 @@ public final class MarblesPlugin extends JavaPlugin implements Listener {
         String name, lore, model; NamedTextColor col;
         switch (type) {
             case "reroller" -> { name = "Element Reroller"; lore = "Right-click to reroll your element."; model = "element_reroller"; col = NamedTextColor.LIGHT_PURPLE; }
-            case "trader" -> { name = "Marble Trader"; lore = "Right-click to trade."; model = "marble_trader"; col = NamedTextColor.GOLD; }
             default -> { name = "Energy Marble"; lore = "Right-click to gain 1 energy."; model = "energy_marble"; col = NamedTextColor.AQUA; }
         }
         m.displayName(Component.text(name, col).decoration(TextDecoration.ITALIC, false));
@@ -340,45 +377,11 @@ public final class MarblesPlugin extends JavaPlugin implements Listener {
             case "reroller" -> {
                 it.setAmount(it.getAmount() - 1);
                 Element n = reroll(p, true);
+                if (getConfig().getBoolean("join-animation.play-on-reroll", true)) playRoll(p, n);
                 p.sendMessage(msg("Rerolled! You are now " + n.display + " (F = " + n.a1 + ", Shift+F = " + n.a2 + ").", NamedTextColor.LIGHT_PURPLE));
-            }
-            case "trader" -> {
-                if (openTrader(p) && getConfig().getBoolean("trader.consume-on-use", false)) it.setAmount(it.getAmount() - 1);
             }
             default -> { }
         }
-    }
-
-    int toInt(Object o, int def) { return o instanceof Number n ? n.intValue() : def; }
-
-    ItemStack parseResult(Map<?, ?> m) {
-        String r = String.valueOf(m.get("result")); int n = toInt(m.get("amount"), 1);
-        if (r.equalsIgnoreCase("energy") || r.equalsIgnoreCase("reroller") || r.equalsIgnoreCase("trader")) return item(r.toLowerCase(), n);
-        Material mat = Material.matchMaterial(r);
-        return mat == null ? null : new ItemStack(mat, n);
-    }
-
-    boolean openTrader(Player p) {
-        List<MerchantRecipe> rs = new ArrayList<>();
-        for (Map<?, ?> m : getConfig().getMapList("trader.trades")) {
-            ItemStack res = parseResult(m);
-            if (res == null) continue;
-            MerchantRecipe r = new MerchantRecipe(res, 0, toInt(m.get("max-uses"), 5), false);
-            r.setIgnoreDiscounts(true);
-            if (m.get("cost") instanceof List<?> cl) for (Object o : cl) {
-                if (r.getIngredients().size() >= 2) break;
-                if (o instanceof Map<?, ?> cm) {
-                    Material mat = Material.matchMaterial(String.valueOf(cm.get("item")));
-                    if (mat != null) r.addIngredient(new ItemStack(mat, toInt(cm.get("amount"), 1)));
-                }
-            }
-            if (!r.getIngredients().isEmpty()) rs.add(r);
-        }
-        if (rs.isEmpty()) { p.sendMessage(msg("The trader has nothing to offer.", NamedTextColor.RED)); return false; }
-        Merchant mer = Bukkit.createMerchant(Component.text(getConfig().getString("trader.title", "Marble Trader")));
-        mer.setRecipes(rs);
-        p.openMerchant(mer, true);
-        return true;
     }
 
     // ---------- commands ----------
@@ -403,6 +406,7 @@ public final class MarblesPlugin extends JavaPlugin implements Listener {
         if (cmd.equals("reroll")) {
             if (!(s instanceof Player p)) return true;
             Element n = reroll(p, true);
+                if (getConfig().getBoolean("join-animation.play-on-reroll", true)) playRoll(p, n);
             p.sendMessage(msg("Rerolled! You are now " + n.display + " (F = " + n.a1 + ", Shift+F = " + n.a2 + ").", NamedTextColor.LIGHT_PURPLE));
             return true;
         }
@@ -413,6 +417,7 @@ public final class MarblesPlugin extends JavaPlugin implements Listener {
                 Player t = who(s, a, 1);
                 if (t == null) { s.sendMessage("Player not found."); return true; }
                 Element n = reroll(t, true);
+                if (getConfig().getBoolean("join-animation.play-on-reroll", true)) playRoll(t, n);
                 s.sendMessage(t.getName() + " is now " + n.display + ".");
                 t.sendMessage(msg("Your element was rerolled: " + n.display + ".", NamedTextColor.LIGHT_PURPLE));
             }
@@ -432,7 +437,7 @@ public final class MarblesPlugin extends JavaPlugin implements Listener {
                 s.sendMessage(t.getName() + " energy: " + energy(t));
             }
             case "give" -> {
-                if (a.length < 2 || !List.of("energy", "reroller", "trader").contains(a[1].toLowerCase())) { s.sendMessage("Usage: /marbles give <energy|reroller|trader> [amount] [player]"); return true; }
+                if (a.length < 2 || !List.of("energy", "reroller").contains(a[1].toLowerCase())) { s.sendMessage("Usage: /marbles give <energy|reroller> [amount] [player]"); return true; }
                 int n = 1;
                 if (a.length > 2) { try { n = Math.max(1, Math.min(64, Integer.parseInt(a[2]))); } catch (NumberFormatException x) { n = 1; } }
                 Player t = who(s, a, 3);
@@ -455,7 +460,7 @@ public final class MarblesPlugin extends JavaPlugin implements Listener {
         if (a.length == 1) return List.of("element", "energy", "give", "reroll", "revive", "reload");
         if (a.length == 2 && a[0].equalsIgnoreCase("element")) return Arrays.stream(Element.values()).map(x -> x.name().toLowerCase()).toList();
         if (a.length == 2 && a[0].equalsIgnoreCase("energy")) return List.of("set", "add");
-        if (a.length == 2 && a[0].equalsIgnoreCase("give")) return List.of("energy", "reroller", "trader");
+        if (a.length == 2 && a[0].equalsIgnoreCase("give")) return List.of("energy", "reroller");
         return null;
     }
 }
