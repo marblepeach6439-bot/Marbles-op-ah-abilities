@@ -14,6 +14,11 @@ unlock-ability-2: 5           # energy needed for Shift+F
 passive-min-energy: 0         # passive works at or above this
 withdraw-min-energy: 0        # /withdraw can't take you below this
 
+# ---- Visual effects ----
+particles:
+  enabled: true
+  density: 2.0               # 0.25 = light (low-end PCs), 1.0 = normal, 2.0 = max flashy
+
 # ---- Global combat rules ----
 damage-cap-hearts: 4          # max true damage one activation can do to one target
 crowd-control:
@@ -22,39 +27,18 @@ crowd-control:
 
 # ---- Items ----
 items:
-  material: PLAYER_HEAD       # base item of Energy Marble / Reroller / Trader
+  material: PLAYER_HEAD       # base item of Energy Marble / Reroller
   use-custom-model: true      # needs the resource pack (otherwise they look like a normal head)
+
+join-animation:
+  enabled: true
+  every-join: true          # false = only the very first join
+  play-on-reroll: true
+  start-delay-ticks: 20
 
 reroll:
   avoid-same: true            # reroll can't give you your current element
   reset-cooldowns: true
-
-trader:
-  title: "Marble Trader"
-  consume-on-use: false       # true = the Trader item is used up when opened
-  # result: energy | reroller | trader | any MATERIAL name.  max-uses is per opening.
-  trades:
-    - result: energy
-      amount: 1
-      max-uses: 3
-      cost:
-        - {item: DIAMOND_BLOCK, amount: 6}
-    - result: reroller
-      amount: 1
-      max-uses: 2
-      cost:
-        - {item: NETHERITE_INGOT, amount: 1}
-        - {item: DIAMOND_BLOCK, amount: 4}
-    - result: GOLDEN_APPLE
-      amount: 2
-      max-uses: 5
-      cost:
-        - {item: GOLD_BLOCK, amount: 4}
-    - result: ENCHANTED_GOLDEN_APPLE
-      amount: 1
-      max-uses: 1
-      cost:
-        - {item: EMERALD_BLOCK, amount: 16}
 
 # ---- Abilities ----
 abilities:
