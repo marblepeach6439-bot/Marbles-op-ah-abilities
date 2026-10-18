@@ -41,6 +41,9 @@ reroll:
   reset-cooldowns: true
 
 # ---- Abilities ----
+# Ability 1 (F) = first listed, Ability 2 (Shift+F) = second.
+# STUN = can't move, attack or use abilities; they can still eat and drink/throw potions.
+# (Stone Prison, Piercing Icicle and Worldroot stun. Molten Prison only locks movement.)
 abilities:
   fire:
     inferno:        {cooldown: 35, radius: 10, damage: 4, fire-seconds: 3}
@@ -52,15 +55,15 @@ abilities:
     passive:        {water-breathing: true, dolphins-grace-level: 1}
   lightning:
     thunderbolt:    {cooldown: 30, range: 25, damage: 4}
-    chain-lightning: {cooldown: 40, targets: 4, range: 20, jump-range: 10, damage: 2, delay-ticks: 4}
+    chain-lightning: {cooldown: 40, range: 20, clones: 4, damage: 1, radius: 3.0, delay-ticks: 6}
     passive:        {speed-level: 1, hits-required: 8, internal-cooldown: 12, damage: 1}
   earth:
     earthquake:     {cooldown: 40, radius: 10, damage: 4, launch: 1.0}
-    stone-prison:   {cooldown: 35, range: 15, duration: 3, block: STONE}
+    stone-prison:   {cooldown: 35, range: 15, stun-seconds: 3, block: STONE}
     passive:        {resistance-level: 1, knockback-reduction: 0.5}
   ice:
     glacial-burst:  {cooldown: 35, radius: 8, damage: 3, slowness-level: 4, slowness-seconds: 3}
-    piercing-icicle: {cooldown: 25, range: 25, damage: 4, weakness-level: 2, weakness-seconds: 4}
+    piercing-icicle: {cooldown: 25, range: 25, damage: 2, stun-seconds: 3, block: ICE, weakness-level: 0, weakness-seconds: 4}
     passive:        {resistance-level: 1, resistance-seconds: 3, internal-cooldown: 15}
   wind:
     cyclone:        {cooldown: 35, range: 15, radius: 4.5, duration: 3, damage: 3, lift: 0.8}
@@ -71,11 +74,11 @@ abilities:
     riftwalk:       {cooldown: 30, range: 15, blindness-seconds: 2, bonus-window-seconds: 3, bonus-damage: 2}
     passive:        {night-vision: true, blindness-immunity: true}
   nature:
-    worldroot:      {cooldown: 35, radius: 8, duration: 3, damage: 2}
+    worldroot:      {cooldown: 35, radius: 8, stun-seconds: 3, damage: 2}
     rebirth:        {cooldown: 60, heal-hearts: 6, leech-seconds: 5, leech-percent: 0.25, leech-cap-hearts: 2}
     passive:        {threshold-hearts: 5, regen-level: 2, regen-seconds: 3, internal-cooldown: 30}
   light:
-    divine-smite:   {cooldown: 35, range: 20, damage: 4}
+    divine-smite:   {cooldown: 35, range: 20, damage: 4, buff-removal-seconds: 15}
     flashbang:      {cooldown: 40, radius: 10, blind-seconds: 3, disable-seconds: 3}
     passive:        {night-vision: true, damage-multiplier: 1.15}
   magma:
