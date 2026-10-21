@@ -18,21 +18,34 @@ import org.bukkit.attribute.AttributeModifier;
 import org.bukkit.block.Block;
 import org.bukkit.command.Command;
 import org.bukkit.command.CommandSender;
+import org.bukkit.entity.ArmorStand;
 import org.bukkit.entity.Boss;
+import org.bukkit.entity.Entity;
+import org.bukkit.entity.Mob;
+import org.bukkit.entity.Projectile;
+import org.bukkit.entity.ThrownPotion;
 import org.bukkit.entity.LivingEntity;
 import org.bukkit.entity.Player;
+import org.bukkit.event.Event;
 import org.bukkit.event.EventHandler;
 import org.bukkit.event.EventPriority;
 import org.bukkit.event.Listener;
 import org.bukkit.event.block.Action;
 import org.bukkit.event.block.BlockBreakEvent;
+import org.bukkit.event.block.BlockPlaceEvent;
 import org.bukkit.event.entity.EntityDamageByEntityEvent;
 import org.bukkit.event.entity.EntityDamageEvent;
+import org.bukkit.event.entity.EntityPotionEffectEvent;
+import org.bukkit.event.entity.EntityShootBowEvent;
+import org.bukkit.event.entity.ProjectileLaunchEvent;
 import org.bukkit.event.entity.PlayerDeathEvent;
 import org.bukkit.event.player.PlayerInteractEvent;
 import org.bukkit.event.player.PlayerJoinEvent;
 import org.bukkit.event.player.PlayerMoveEvent;
 import org.bukkit.event.player.PlayerSwapHandItemsEvent;
+import org.bukkit.event.player.PlayerTeleportEvent;
+import org.bukkit.event.player.PlayerVelocityEvent;
+import com.destroystokyo.paper.event.player.PlayerJumpEvent;
 import org.bukkit.inventory.EquipmentSlot;
 import org.bukkit.inventory.ItemStack;
 import org.bukkit.inventory.meta.ItemMeta;
@@ -57,6 +70,9 @@ public final class MarblesPlugin extends JavaPlugin implements Listener {
     final Map<String, Long> pcd = new HashMap<>();
     final Map<UUID, Integer> hits = new HashMap<>();
     final Set<Block> temp = new HashSet<>();
+    final Map<UUID, Long> stunned = new HashMap<>(), buffBlock = new HashMap<>();
+    final Set<ArmorStand> clones = new HashSet<>();
+    boolean allowBuff = false;
 
     @Override public void onEnable() {
         I = this;
@@ -73,6 +89,8 @@ public final class MarblesPlugin extends JavaPlugin implements Listener {
     @Override public void onDisable() {
         for (Block b : temp) if (b.getType() != Material.AIR && b.getType().isSolid()) b.setType(Material.AIR);
         temp.clear();
+        for (ArmorStand a : clones) a.remove();
+        clones.clear();
     }
 
     // ---------- config shortcuts ----------
@@ -111,14 +129,31 @@ public final class MarblesPlugin extends JavaPlugin implements Listener {
     }
 
     // ---------- helpers used by abilities ----------
-    boolean root(LivingEntity t, int ticks) {
+    boolean isStunned(Entity e) { Long u = stunned.get(e.getUniqueId()); return u != null && u > System.currentTimeMillis(); }
+
+    /** Movement lock only (Molten Prison). */
+    boolean immobilize(LivingEntity t, int ticks) { return lock(t, ticks, false); }
+
+    /** Full stun: can't move, attack, cast or use items - except eating and potions. */
+    boolean stun(LivingEntity t, int ticks) { return lock(t, ticks, true); }
+
+    private boolean lock(LivingEntity t, int ticks, boolean full) {
         long now = System.currentTimeMillis();
         if (immune.getOrDefault(t.getUniqueId(), 0L) > now) return false;
         if (t instanceof Boss) ticks = (int) (ticks * getConfig().getDouble("crowd-control.boss-duration-multiplier", 0.5));
         long ms = ticks * 50L;
         immobile.put(t.getUniqueId(), now + ms);
+        if (full) stunned.put(t.getUniqueId(), now + ms);
         immune.put(t.getUniqueId(), now + ms + (long) (getConfig().getDouble("crowd-control.immunity-seconds", 4) * 1000));
         t.addPotionEffect(new PotionEffect(PotionEffectType.SLOWNESS, ticks, 9, false, false, false));
+        if (full && t instanceof Player tp)
+            tp.showTitle(Title.title(Component.text("STUNNED", NamedTextColor.RED, TextDecoration.BOLD),
+                    Component.text(String.format("%.1f seconds", ms / 1000.0), NamedTextColor.GRAY),
+                    Title.Times.times(Duration.ZERO, Duration.ofMillis(Math.max(300, ms)), Duration.ofMillis(300))));
+        if (full && t instanceof Mob mob) {
+            mob.setAware(false);
+            Bukkit.getScheduler().runTaskLater(this, () -> { if (mob.isValid()) mob.setAware(true); }, ticks);
+        }
         return true;
     }
 
@@ -150,6 +185,7 @@ public final class MarblesPlugin extends JavaPlugin implements Listener {
 
     void cast(Player p, int slot) {
         Element el = element(p);
+        if (isStunned(p)) { p.sendMessage(msg("You are stunned!", NamedTextColor.RED)); return; }
         if (energy(p) < unlock(slot)) { p.sendMessage(msg("You need " + unlock(slot) + " energy to use " + el.ability(slot) + ".", NamedTextColor.RED)); return; }
         long now = System.currentTimeMillis();
         if (disabled.getOrDefault(p.getUniqueId(), 0L) > now) { p.sendMessage(msg("Your abilities are disabled!", NamedTextColor.RED)); return; }
@@ -224,6 +260,9 @@ public final class MarblesPlugin extends JavaPlugin implements Listener {
     // ---------- combat ----------
     @EventHandler(ignoreCancelled = true, priority = EventPriority.HIGH)
     public void onHit(EntityDamageByEntityEvent e) {
+        Entity dmgr = e.getDamager();
+        if (dmgr instanceof Projectile pr && pr.getShooter() instanceof Entity shooter) dmgr = shooter;
+        if (isStunned(dmgr)) { e.setCancelled(true); return; }
         if (!(e.getDamager() instanceof Player p) || !(e.getEntity() instanceof LivingEntity t)) return;
         Element el = element(p);
         if (el == null) return;
@@ -261,7 +300,7 @@ public final class MarblesPlugin extends JavaPlugin implements Listener {
         }
     }
 
-    @EventHandler public void onMove(PlayerMoveEvent e) {
+    @EventHandler(priority = EventPriority.HIGHEST) public void onMove(PlayerMoveEvent e) {
         UUID id = e.getPlayer().getUniqueId();
         Long u = immobile.get(id);
         if (u == null) return;
@@ -359,7 +398,7 @@ public final class MarblesPlugin extends JavaPlugin implements Listener {
     }
 
     @EventHandler public void onUse(PlayerInteractEvent e) {
-        if (e.getHand() != EquipmentSlot.HAND) return;
+        if (e.getHand() != EquipmentSlot.HAND || isStunned(e.getPlayer())) return;
         Action a = e.getAction();
         if (a != Action.RIGHT_CLICK_AIR && a != Action.RIGHT_CLICK_BLOCK) return;
         ItemStack it = e.getItem();
@@ -382,6 +421,44 @@ public final class MarblesPlugin extends JavaPlugin implements Listener {
             }
             default -> { }
         }
+    }
+
+    // ---------- stun rules: can't move/attack/cast; CAN eat and use potions ----------
+    @EventHandler public void onStunInteract(PlayerInteractEvent e) {
+        if (!isStunned(e.getPlayer())) return;
+        e.setUseInteractedBlock(Event.Result.DENY);
+        ItemStack it = e.getItem();
+        Material m = it == null ? Material.AIR : it.getType();
+        boolean ok = m == Material.POTION || m == Material.SPLASH_POTION || m == Material.LINGERING_POTION
+                || (m.isEdible() && m != Material.CHORUS_FRUIT);
+        if (!ok) e.setUseItemInHand(Event.Result.DENY);
+    }
+
+    @EventHandler public void onStunLaunch(ProjectileLaunchEvent e) {
+        if (e.getEntity().getShooter() instanceof Entity s && isStunned(s) && !(e.getEntity() instanceof ThrownPotion)) e.setCancelled(true);
+    }
+
+    @EventHandler public void onStunVelocity(PlayerVelocityEvent e) { if (isStunned(e.getPlayer())) e.setCancelled(true); }
+    @EventHandler public void onStunJump(PlayerJumpEvent e) { if (isStunned(e.getPlayer())) e.setCancelled(true); }
+    @EventHandler public void onStunShoot(EntityShootBowEvent e) { if (isStunned(e.getEntity())) e.setCancelled(true); }
+    @EventHandler public void onStunBreak(BlockBreakEvent e) { if (isStunned(e.getPlayer())) e.setCancelled(true); }
+    @EventHandler public void onStunPlace(BlockPlaceEvent e) { if (isStunned(e.getPlayer())) e.setCancelled(true); }
+
+    @EventHandler public void onStunTeleport(PlayerTeleportEvent e) {
+        if (!isStunned(e.getPlayer())) return;
+        if (e.getCause() == PlayerTeleportEvent.TeleportCause.ENDER_PEARL || e.getCause() == PlayerTeleportEvent.TeleportCause.CHORUS_FRUIT) e.setCancelled(true);
+    }
+
+    /** Divine Smite: while buffs are "removed", new beneficial effects can't be applied. */
+    @EventHandler(ignoreCancelled = true) public void onBuffBlock(EntityPotionEffectEvent e) {
+        if (allowBuff || !(e.getEntity() instanceof LivingEntity le)) return;
+        Long u = buffBlock.get(le.getUniqueId());
+        if (u == null || u < System.currentTimeMillis()) return;
+        EntityPotionEffectEvent.Action act = e.getAction();
+        if (act != EntityPotionEffectEvent.Action.ADDED && act != EntityPotionEffectEvent.Action.CHANGED) return;
+        PotionEffect ne = e.getNewEffect();
+        if (ne == null || !Abilities.POS.contains(ne.getType()) || e.getCause() == EntityPotionEffectEvent.Cause.TOTEM) return;
+        e.setCancelled(true);
     }
 
     // ---------- commands ----------
@@ -445,6 +522,13 @@ public final class MarblesPlugin extends JavaPlugin implements Listener {
                 t.getInventory().addItem(item(a[1].toLowerCase(), n)).values().forEach(i -> t.getWorld().dropItemNaturally(t.getLocation(), i));
                 s.sendMessage("Gave " + n + " " + a[1] + " to " + t.getName() + ".");
             }
+            case "stun" -> {
+                Player t = a.length > 1 ? Bukkit.getPlayer(a[1]) : null;
+                if (t == null) { s.sendMessage("Usage: /marbles stun <player> [seconds]"); return true; }
+                double sec = 3; if (a.length > 2) { try { sec = Double.parseDouble(a[2]); } catch (NumberFormatException x) { sec = 3; } }
+                boolean ok = stun(t, (int) Math.round(sec * 20));
+                s.sendMessage(ok ? "Stunned " + t.getName() + " for " + sec + "s." : t.getName() + " is stun-immune right now.");
+            }
             case "revive" -> {
                 if (a.length < 2) return false;
                 Bukkit.dispatchCommand(Bukkit.getConsoleSender(), "pardon " + a[1]);
@@ -457,7 +541,7 @@ public final class MarblesPlugin extends JavaPlugin implements Listener {
 
     @Override public List<String> onTabComplete(CommandSender s, Command c, String l, String[] a) {
         if (!c.getName().equalsIgnoreCase("marbles")) return List.of();
-        if (a.length == 1) return List.of("element", "energy", "give", "reroll", "revive", "reload");
+        if (a.length == 1) return List.of("element", "energy", "give", "reroll", "stun", "revive", "reload");
         if (a.length == 2 && a[0].equalsIgnoreCase("element")) return Arrays.stream(Element.values()).map(x -> x.name().toLowerCase()).toList();
         if (a.length == 2 && a[0].equalsIgnoreCase("energy")) return List.of("set", "add");
         if (a.length == 2 && a[0].equalsIgnoreCase("give")) return List.of("energy", "reroller");
