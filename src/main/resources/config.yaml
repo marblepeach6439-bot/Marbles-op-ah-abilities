@@ -41,6 +41,9 @@ reroll:
   reset-cooldowns: true
 
 # ---- Abilities ----
+# Ability 1 (F) = first listed, Ability 2 (Shift+F) = second.
+# STUN = can't move, attack or use abilities; they can still eat and drink/throw potions.
+# (Stone Prison, Piercing Icicle and Worldroot stun. Molten Prison only locks movement.)
 abilities:
   fire:
     inferno:        {cooldown: 35, radius: 10, damage: 4, fire-seconds: 3}
@@ -52,15 +55,15 @@ abilities:
     passive:        {water-breathing: true, dolphins-grace-level: 1}
   lightning:
     thunderbolt:    {cooldown: 30, range: 25, damage: 4}
-    chain-lightning: {cooldown: 40, targets: 4, range: 20, jump-range: 10, damage: 2, delay-ticks: 4}
+    chain-lightning: {cooldown: 40, range: 20, clones: 4, damage: 1, radius: 3.0, delay-ticks: 6}
     passive:        {speed-level: 1, hits-required: 8, internal-cooldown: 12, damage: 1}
   earth:
     earthquake:     {cooldown: 40, radius: 10, damage: 4, launch: 1.0}
-    stone-prison:   {cooldown: 35, range: 15, duration: 3, block: STONE}
+    stone-prison:   {cooldown: 35, range: 15, stun-seconds: 3, block: STONE}
     passive:        {resistance-level: 1, knockback-reduction: 0.5}
   ice:
     glacial-burst:  {cooldown: 35, radius: 8, damage: 3, slowness-level: 4, slowness-seconds: 3}
-    piercing-icicle: {cooldown: 25, range: 25, damage: 4, weakness-level: 2, weakness-seconds: 4}
+    piercing-icicle: {cooldown: 25, range: 25, damage: 2, stun-seconds: 3, block: ICE, weakness-level: 0, weakness-seconds: 4}
     passive:        {resistance-level: 1, resistance-seconds: 3, internal-cooldown: 15}
   wind:
     cyclone:        {cooldown: 35, range: 15, radius: 4.5, duration: 3, damage: 3, lift: 0.8}
@@ -71,14 +74,35 @@ abilities:
     riftwalk:       {cooldown: 30, range: 15, blindness-seconds: 2, bonus-window-seconds: 3, bonus-damage: 2}
     passive:        {night-vision: true, blindness-immunity: true}
   nature:
-    worldroot:      {cooldown: 35, radius: 8, duration: 3, damage: 2}
-    rebirth:        {cooldown: 60, heal-hearts: 6, leech-seconds: 5, leech-percent: 0.25, leech-cap-hearts: 2}
-    passive:        {threshold-hearts: 5, regen-level: 2, regen-seconds: 3, internal-cooldown: 30}
+    worldroot:      {cooldown: 35, radius: 8, stun-seconds: 3, damage: 2}
+    rebirth:        {cooldown: 60, heal-hearts: 6, regen-level: 4, regen-seconds: 5, armor-repair: 30, leech-seconds: 5, leech-percent: 0.25, leech-cap-hearts: 2}
+    passive:        {hero-of-the-village-level: 4, gapple-multiplier: 2.0}   # gapple-multiplier: golden apples give this x absorption and saturation
   light:
-    divine-smite:   {cooldown: 35, range: 20, damage: 4}
+    divine-smite:   {cooldown: 35, range: 20, damage: 4, buff-removal-seconds: 15}
     flashbang:      {cooldown: 40, radius: 10, blind-seconds: 3, disable-seconds: 3}
     passive:        {night-vision: true, damage-multiplier: 1.15}
   magma:
     eruption:       {cooldown: 40, range: 20, radius: 6, damage: 4, launch: 0.8}
     molten-prison:  {cooldown: 30, range: 15, duration: 2, damage: 2}
-    passive:        {fire-immunity: true, strength-level: 1, strength-seconds: 2, internal-cooldown: 10}
+    passive:        {fire-immunity: true, armor-durability-multiplier: 1.15}   # armor lasts 1.15x as long
+
+  # ---- ADMIN-ONLY elements (never rolled): /marbles element <dragon|sculk|death|divine> [player] ----
+  # Passives for these also give a themed potion: extra-effect / extra-level (set level 0 to disable).
+  dragon:
+    # F once: a dragon appears above you (ready-seconds to use it). F again: it flies forward.
+    dragons-descent: {cooldown: 45, ready-seconds: 15, range: 30, speed: 2.0, radius: 3.5, damage: 4, destroy-blocks: true, yaw-offset: 180}
+    crystal-chaos:  {cooldown: 60, crystals: 6, radius: 10, duration-seconds: 30, effect-range: 20, regen-level: 4, repair-per-second: 4}
+    passive:        {speed-level: 2, strength-level: 2, resistance-level: 1, double-jump: true, void-immunity: true, extra-effect: slow_falling, extra-level: 1}
+  sculk:
+    wardens-wrath:  {cooldown: 35, beams: 5, beam-delay-ticks: 4, range: 30, damage: 1, armor-durability-damage: 15}
+    # cooldown starts AFTER the domain ends
+    wardens-domain: {cooldown: 60, radius: 20, duration-seconds: 60, block: SCULK, weakness-level: 1, slowness-level: 1, resistance-level: 3}
+    passive:        {speed-level: 2, strength-level: 2, resistance-level: 1, extra-effect: night_vision, extra-level: 1, glowing-radius: 50, darkness-seconds: 5, max-tamed: 1}
+  death:
+    reapers-sentence: {cooldown: 600, range: 40, duration-seconds: 300, slowness-level: 2, weakness-level: 1}
+    inevitable-death: {cooldown: 43200, duration-seconds: 3600}
+    passive:        {speed-level: 2, strength-level: 2, resistance-level: 1, extra-effect: health_boost, extra-level: 1, max-minions: 10, lifesteal-hearts: 0.5, min-attack-strength: 0.9}
+  divine:
+    divine-judgement: {cooldown: 30, range: 30, damage: 4, blind-seconds: 5, weakness-level: 2, weakness-seconds: 5}
+    divine-authority: {cooldown: 30, range: 30, damage: 2, weakness-level: 2, slowness-level: 2, duration-seconds: 20}
+    passive:        {speed-level: 2, strength-level: 2, resistance-level: 1, double-jump: true, extra-effect: regeneration, extra-level: 1, hits-required: 5, damage: 1}
