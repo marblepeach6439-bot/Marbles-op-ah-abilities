@@ -61,13 +61,13 @@ final class Abilities {
         Ctx c = new Ctx(p);
         String k = el.path(slot);
         return switch (el) {
-            case FIRE -> slot == 0 ? inferno(c, k) : dash(c, k, Fx2.both(Fx2.trans(ORANGE, RED, 1.4f), Fx2.sometimes(0.4, Fx2.pt(Particle.FLAME, 1, 0.05, 0.02))), Particle.FLAME, false);
+            case FIRE -> slot == 0 ? dash(c, k, Fx2.both(Fx2.trans(ORANGE, RED, 1.4f), Fx2.sometimes(0.4, Fx2.pt(Particle.FLAME, 1, 0.05, 0.02))), Particle.FLAME, false) : inferno(c, k);
             case WATER -> slot == 0 ? tsunami(c, k) : whirlpool(c, k);
             case LIGHTNING -> slot == 0 ? thunderbolt(c, k) : chain(c, k);
             case EARTH -> slot == 0 ? earthquake(c, k) : stonePrison(c, k);
             case ICE -> slot == 0 ? glacialBurst(c, k) : icicle(c, k);
-            case WIND -> slot == 0 ? cyclone(c, k) : dash(c, k, Fx2.both(Fx2.dust(GRAY, 1.3f), Fx2.sometimes(0.5, Fx2.pt(Particle.CLOUD, 1, 0.05, 0.01))), Particle.CLOUD, true);
-            case VOID -> slot == 0 ? eventHorizon(c, k) : riftwalk(c, k);
+            case WIND -> slot == 0 ? dash(c, k, Fx2.both(Fx2.dust(GRAY, 1.3f), Fx2.sometimes(0.5, Fx2.pt(Particle.CLOUD, 1, 0.05, 0.01))), Particle.CLOUD, true) : cyclone(c, k);
+            case VOID -> slot == 0 ? riftwalk(c, k) : eventHorizon(c, k);
             case NATURE -> slot == 0 ? worldroot(c, k) : rebirth(c, k);
             case LIGHT -> slot == 0 ? smite(c, k) : flashbang(c, k);
             case MAGMA -> slot == 0 ? eruption(c, k) : moltenPrison(c, k);
@@ -120,6 +120,9 @@ final class Abilities {
         Flair.hit(c.p, hc);
         if (t instanceof Mob m) m.setTarget(c.p);
         pl().leech(c.p, amt);
+        double ab = t.getAbsorptionAmount();
+        if (ab > 0) { double take = Math.min(ab, amt); t.setAbsorptionAmount(ab - take); amt -= take; }
+        if (amt <= 0) return;
         double nh = t.getHealth() - amt;
         if (nh <= 0) { if (popTotem(t)) return; t.setKiller(c.p); t.setHealth(0); } else t.setHealth(nh);
     }
@@ -139,9 +142,11 @@ final class Abilities {
         else eq.setItemInOffHand(new org.bukkit.inventory.ItemStack(Material.AIR));
         t.setHealth(1.0);
         for (PotionEffect e : new ArrayList<>(t.getActivePotionEffects())) t.removePotionEffect(e.getType());
+        pl().allowBuff = true;
         t.addPotionEffect(new PotionEffect(PotionEffectType.REGENERATION, 900, 1));
         t.addPotionEffect(new PotionEffect(PotionEffectType.ABSORPTION, 100, 1));
         t.addPotionEffect(new PotionEffect(PotionEffectType.FIRE_RESISTANCE, 800, 0));
+        pl().allowBuff = false;
         t.playEffect(org.bukkit.EntityEffect.PROTECTED_FROM_DEATH);
         return true;
     }
@@ -171,6 +176,56 @@ final class Abilities {
         if (d.lengthSquared() > 0.5) d.normalize().multiply(strength); else d.zero();
         d.setY(Math.max(0, e.getVelocity().getY()));
         e.setVelocity(d);
+    }
+
+    // ---------- shared: stun visuals, block at feet, afterimage clones ----------
+    static boolean tryStun(Player by, LivingEntity t, int dur) {
+        boolean ok = pl().stun(t, dur);
+        String name = t instanceof Player pp ? pp.getName() : t.getName();
+        by.sendMessage(net.kyori.adventure.text.Component.text(ok ? "Stunned " + name + "!" : name + " is stun-immune right now.",
+                ok ? net.kyori.adventure.text.format.NamedTextColor.GOLD : net.kyori.adventure.text.format.NamedTextColor.GRAY));
+        return ok;
+    }
+
+    static void stunFx(LivingEntity t, int dur) {
+        zone(dur, tick -> {
+            if (t.isDead() || tick % 3 != 0) return;
+            Location h = t.getLocation().add(0, t.getHeight() + 0.3, 0);
+            Fx2.ring(h, 0.45, 6, Fx2.dust(YELLOW, 1.0f));
+            Fx2.p(h, Particle.CRIT, 2, 0.2, 0.05, 0.2, 0.05);
+        }, null);
+    }
+
+    /** Puts a block on the target's feet so they look stuck; removed when the stun ends. */
+    static void entomb(LivingEntity t, Material mat, int dur, Consumer<Location> fx) {
+        Block b = t.getLocation().getBlock();
+        if (!(b.getType().isAir() || b.isReplaceable())) return;
+        b.setType(mat); pl().temp.add(b);
+        Location mid = b.getLocation().add(0.5, 0.5, 0.5);
+        Fx2.sphere(mid, 0.8, 16, fx);
+        org.bukkit.Bukkit.getScheduler().runTaskLater(pl(), () -> {
+            if (b.getType() == mat) { Fx2.sphere(mid, 0.9, 18, fx); b.setType(Material.AIR); }
+            pl().temp.remove(b);
+        }, dur);
+    }
+
+    /** A glowing armor-stand afterimage of the player (their head, armor and held item). */
+    static ArmorStand spawnClone(Player p, Location loc) {
+        ArmorStand as = loc.getWorld().spawn(loc, ArmorStand.class, s -> {
+            s.setArms(true); s.setBasePlate(false); s.setGravity(false); s.setInvulnerable(true); s.setSilent(true);
+            s.setMarker(true); s.setCollidable(false); s.setPersistent(false); s.setGlowing(true); s.setCanPickupItems(false);
+            org.bukkit.inventory.EntityEquipment eq = s.getEquipment();
+            org.bukkit.inventory.ItemStack head = new org.bukkit.inventory.ItemStack(Material.PLAYER_HEAD);
+            org.bukkit.inventory.meta.SkullMeta sm = (org.bukkit.inventory.meta.SkullMeta) head.getItemMeta();
+            sm.setOwningPlayer(p); head.setItemMeta(sm);
+            eq.setHelmet(head);
+            org.bukkit.inventory.PlayerInventory inv = p.getInventory();
+            eq.setChestplate(inv.getChestplate()); eq.setLeggings(inv.getLeggings()); eq.setBoots(inv.getBoots());
+            eq.setItemInMainHand(inv.getItemInMainHand());
+            s.setRightArmPose(new org.bukkit.util.EulerAngle(Math.toRadians(-20), 0, 0));
+        });
+        pl().clones.add(as);
+        return as;
     }
 
     static boolean dash(Ctx c, String k, Consumer<Location> trail, Particle accent, boolean knock) {
@@ -298,29 +353,62 @@ final class Abilities {
     }
 
     static boolean chain(Ctx c, String k) {
-        List<LivingEntity> chain = new ArrayList<>();
-        Location from = c.p.getEyeLocation(); double range = v(k + ".range");
-        for (int i = 0; i < (int) v(k + ".targets"); i++) {
-            LivingEntity best = null; double bd = Double.MAX_VALUE;
-            for (LivingEntity e : enemies(c.p, from, range)) {
-                double d = e.getBoundingBox().getCenter().distanceSquared(from.toVector());
-                if (!chain.contains(e) && d < bd) { bd = d; best = e; }
+        Player p = c.p;
+        double range = v(k + ".range");
+        LivingEntity found = target(p, range);
+        if (found == null) {
+            double bd = Double.MAX_VALUE;
+            for (LivingEntity e : enemies(p, p.getLocation(), range)) {
+                double d = e.getLocation().distanceSquared(p.getLocation());
+                if (d < bd) { bd = d; found = e; }
             }
-            if (best == null) break;
-            chain.add(best); from = best.getEyeLocation(); range = v(k + ".jump-range");
         }
-        if (chain.isEmpty()) return false;
-        long delay = (long) v(k + ".delay-ticks");
-        for (int i = 0; i < chain.size(); i++) {
-            LivingEntity e = chain.get(i);
-            Location prev = i == 0 ? c.p.getEyeLocation().add(c.p.getEyeLocation().getDirection().multiply(0.6)) : chain.get(i - 1).getEyeLocation();
+        if (found == null) return false;
+        final LivingEntity tg = found;
+        int n = Math.max(1, (int) v(k + ".clones")); double rad = v(k + ".radius");
+        long delay = Math.max(1, (long) v(k + ".delay-ticks")); double dmg = v(k + ".damage");
+        Consumer<Location> ghost = Fx2.both(Fx2.trans(YELLOW, VIOLET, 1.4f), Fx2.sometimes(0.5, Fx2.pt(Particle.ELECTRIC_SPARK, 1, 0.05, 0.05)));
+        double off = Math.random() * Math.PI * 2;
+        snd(p.getLocation(), Sound.ENTITY_ENDERMAN_TELEPORT, 1f, 1.6f);
+        Fx2.sphere(p.getLocation().add(0, 1, 0), 1.0, 30, ghost);
+        for (int i = 0; i < n; i++) {
+            final double a = off + 2 * Math.PI * i / n;
             org.bukkit.Bukkit.getScheduler().runTaskLater(pl(), () -> {
-                if (e.isDead()) return;
-                Fx2.bolt(prev, e.getEyeLocation(), ZAP);
-                e.getWorld().strikeLightningEffect(e.getLocation());
-                Fx2.sphere(e.getBoundingBox().getCenter().toLocation(e.getWorld()), 1.0, 24, ZAP);
-                shock(e.getLocation());
-                hurt(c, e, v(k + ".damage"));
+                if (tg.isDead() || !p.isOnline()) return;
+                Location tc = tg.getLocation();
+                Location far = tc.clone().add(Math.cos(a) * rad, 0, Math.sin(a) * rad);
+                Location near = tc.clone().add(Math.cos(a) * 1.2, 0, Math.sin(a) * 1.2);
+                far.setDirection(tc.toVector().subtract(far.toVector()));
+                near.setDirection(tc.toVector().subtract(near.toVector()));
+                ArmorStand clone = spawnClone(p, far);
+                Fx2.sphere(far.clone().add(0, 1, 0), 0.9, 24, ghost);
+                snd(far, Sound.ENTITY_ENDERMAN_TELEPORT, 0.8f, 1.8f);
+                zone(12, tick -> {
+                    if (clone.isDead()) return;
+                    Location body = clone.getLocation().add(0, 1, 0);
+                    Fx2.sphere(body, 0.55, 10, ghost);
+                    Fx2.p(body, Particle.CLOUD, 2, 0.25, 0.5, 0.25, 0.01);
+                    if (tick == 3) {
+                        Fx2.line(far.clone().add(0, 1, 0), near.clone().add(0, 1, 0), 0.3, ghost);
+                        clone.teleport(near);
+                    }
+                    if (tick == 5) {
+                        clone.setRightArmPose(new org.bukkit.util.EulerAngle(Math.toRadians(-100), 0, 0));
+                        snd(near, Sound.ENTITY_PLAYER_ATTACK_SWEEP, 1f, 1.2f);
+                        if (!tg.isDead()) {
+                            hurt(c, tg, dmg);
+                            Location hc = tg.getBoundingBox().getCenter().toLocation(tg.getWorld());
+                            Fx2.radial(hc, Particle.ELECTRIC_SPARK, 40, 0.4);
+                            Fx2.p(hc, Particle.SWEEP_ATTACK, 2, 0.3, 0.3, 0.3, 0);
+                        }
+                    }
+                }, () -> {
+                    Location body = clone.getLocation().add(0, 1, 0);
+                    Fx2.radial(body, Particle.CLOUD, 30, 0.2);
+                    Fx2.sphere(body, 0.9, 20, ghost);
+                    pl().clones.remove(clone);
+                    clone.remove();
+                });
             }, i * delay);
         }
         return true;
@@ -354,34 +442,13 @@ final class Abilities {
         LivingEntity t = target(c.p, v(k + ".range"));
         if (t == null) return false;
         Material mat = Material.matchMaterial(str(k + ".block")); if (mat == null) mat = Material.STONE;
-        int dur = ticks(k + ".duration");
-        if (!pl().root(t, dur)) return true;
-        Block base = t.getLocation().getBlock();
-        List<Block> placed = new ArrayList<>();
-        Consumer<Location> rock = Fx2.block(mat);
-        for (int dx = -1; dx <= 1; dx++) for (int dz = -1; dz <= 1; dz++) {
-            if (dx == 0 && dz == 0) continue;
-            for (int dy = 0; dy <= 2; dy++) {
-                Block b = base.getRelative(dx, dy, dz);
-                if (b.getType().isAir()) {
-                    b.setType(mat); placed.add(b); pl().temp.add(b);
-                    Fx2.sphere(b.getLocation().add(0.5, 0.5, 0.5), 0.6, 8, rock);
-                }
-            }
+        int dur = ticks(k + ".stun-seconds");
+        if (tryStun(c.p, t, dur)) {
+            entomb(t, mat, dur, Fx2.block(mat));
+            stunFx(t, dur);
+            Fx2.ring(t.getLocation().add(0, 0.2, 0), 1.6, 24, Fx2.dust(BROWN, 1.5f));
+            snd(t.getLocation(), Sound.BLOCK_STONE_PLACE, 1f, 0.7f);
         }
-        snd(t.getLocation(), Sound.BLOCK_STONE_PLACE, 1f, 0.7f);
-        Fx2.ring(t.getLocation().add(0, 0.2, 0), 1.6, 24, Fx2.dust(BROWN, 1.5f));
-        zone(dur, tick -> {
-            if (tick % 4 == 0) Fx2.helix(t.getLocation(), 1.3, 3, 20, 1, tick * 0.3, Fx2.pt(Particle.ENCHANT, 1, 0.05, 0.1));
-        }, null);
-        final Material fm = mat;
-        org.bukkit.Bukkit.getScheduler().runTaskLater(pl(), () -> {
-            for (Block b : placed) {
-                if (b.getType() == fm) { Fx2.sphere(b.getLocation().add(0.5, 0.5, 0.5), 0.7, 10, rock); b.setType(Material.AIR); }
-                pl().temp.remove(b);
-            }
-            snd(t.getLocation(), Sound.BLOCK_STONE_BREAK, 1f, 0.6f);
-        }, dur);
         return true;
     }
 
@@ -410,6 +477,8 @@ final class Abilities {
         Location eye = c.p.getEyeLocation(); Vector dir = eye.getDirection(); Set<UUID> hit = new HashSet<>();
         Vector up = Math.abs(dir.getY()) > 0.95 ? new Vector(1, 0, 0) : new Vector(0, 1, 0);
         Vector p1 = dir.clone().crossProduct(up).normalize(), p2 = dir.clone().crossProduct(p1).normalize();
+        Material mat = Material.matchMaterial(str(k + ".block")); if (mat == null) mat = Material.ICE;
+        final Material fm = mat; int dur = ticks(k + ".stun-seconds"); int wl = (int) v(k + ".weakness-level");
         Consumer<Location> ice = Fx2.both(Fx2.trans(ICE, AQUA, 1.2f), Fx2.sometimes(0.4, Fx2.pt(Particle.SNOWFLAKE, 1, 0.03, 0.01)));
         snd(eye, Sound.ENTITY_PLAYER_ATTACK_CRIT, 1f, 1.6f);
         Fx2.ring(eye.clone().add(dir.clone().multiply(1.2)), 0.5, 12, Fx2.pt(Particle.END_ROD));
@@ -417,17 +486,21 @@ final class Abilities {
             Location l = eye.clone().add(dir.clone().multiply(d));
             if (l.getBlock().getType().isSolid()) { Fx2.radial(l, Particle.SNOWFLAKE, 40, 0.4); break; }
             double a = d * 2.4;
-            for (int s = 0; s < 2; s++) {
-                double aa = a + s * Math.PI;
+            for (int s2 = 0; s2 < 2; s2++) {
+                double aa = a + s2 * Math.PI;
                 ice.accept(l.clone().add(p1.clone().multiply(Math.cos(aa) * 0.35)).add(p2.clone().multiply(Math.sin(aa) * 0.35)));
             }
             Fx2.p(l, Particle.END_ROD, 1, 0, 0, 0, 0);
             for (LivingEntity e : enemies(c.p, l, 1.3)) if (hit.add(e.getUniqueId())) {
                 hurt(c, e, v(k + ".damage"));
-                e.addPotionEffect(new PotionEffect(PotionEffectType.WEAKNESS, ticks(k + ".weakness-seconds"), (int) v(k + ".weakness-level") - 1));
+                if (wl > 0) e.addPotionEffect(new PotionEffect(PotionEffectType.WEAKNESS, ticks(k + ".weakness-seconds"), wl - 1));
                 Location ec = e.getBoundingBox().getCenter().toLocation(e.getWorld());
                 Fx2.radial(ec, Particle.SNOWFLAKE, 40, 0.4);
                 Fx2.sphere(ec, 0.9, 20, ice);
+                if (tryStun(c.p, e, dur)) {
+                    entomb(e, fm, dur, Fx2.both(Fx2.trans(ICE, AQUA, 1.4f), Fx2.block(fm)));
+                    stunFx(e, dur);
+                }
             }
         }
         return true;
@@ -527,7 +600,7 @@ final class Abilities {
 
     // ---------- NATURE ----------
     static boolean worldroot(Ctx c, String k) {
-        Location l = c.p.getLocation(), base = l.clone().add(0, 0.15, 0); double r = v(k + ".radius"); int dur = ticks(k + ".duration");
+        Location l = c.p.getLocation(), base = l.clone().add(0, 0.15, 0); double r = v(k + ".radius"); int dur = ticks(k + ".stun-seconds");
         Consumer<Location> leaf = Fx2.both(Fx2.trans(GREEN, LIME, 1.3f), Fx2.sometimes(0.3, Fx2.pt(Particle.HAPPY_VILLAGER, 1, 0.1, 0)));
         snd(l, Sound.BLOCK_GRASS_BREAK, 1.5f, 0.5f);
         Fx2.ring(base, 1.2, 20, leaf);
@@ -541,7 +614,7 @@ final class Abilities {
         }, null);
         for (LivingEntity e : enemies(c.p, l, r)) {
             hurt(c, e, v(k + ".damage"));
-            pl().root(e, dur);
+            if (tryStun(c.p, e, dur)) stunFx(e, dur);
             Fx2.helix(e.getLocation(), 0.7, 2.5, 30, 3, 0, leaf);
             Fx2.sphere(e.getBoundingBox().getCenter().toLocation(e.getWorld()), 0.8, 16, Fx2.block(Material.MOSS_BLOCK));
             Fx2.p(e.getLocation().add(0, 0.5, 0), Particle.SPORE_BLOSSOM_AIR, 15, 0.5, 0.8, 0.5, 0);
@@ -586,7 +659,26 @@ final class Abilities {
             Fx2.ring(l.clone().add(0, 0.15, 0), 2.0, 30, Fx2.dust(GOLD, 1.8f));
             zone(10, tk -> Fx2.column(l, 22, 0.6, Fx2.sometimes(0.5, holy)), null);
         });
-        for (PotionEffect e : new ArrayList<>(t.getActivePotionEffects())) if (POS.contains(e.getType())) t.removePotionEffect(e.getType());
+        int dur = ticks(k + ".buff-removal-seconds");
+        List<PotionEffect> removed = new ArrayList<>();
+        for (PotionEffect e : new ArrayList<>(t.getActivePotionEffects()))
+            if (POS.contains(e.getType())) { removed.add(e); t.removePotionEffect(e.getType()); }
+        UUID tid = t.getUniqueId();
+        pl().buffBlock.put(tid, System.currentTimeMillis() + dur * 50L);
+        org.bukkit.Bukkit.getScheduler().runTaskLater(pl(), () -> {
+            pl().buffBlock.remove(tid);
+            if (t.isDead() || !t.isValid()) return;
+            pl().allowBuff = true;
+            try {
+                for (PotionEffect e : removed) {
+                    int rem = e.getDuration() < 0 ? -1 : e.getDuration() - dur;
+                    if (e.getDuration() >= 0 && rem <= 0) continue;
+                    if (!t.hasPotionEffect(e.getType()))
+                        t.addPotionEffect(new PotionEffect(e.getType(), rem, e.getAmplifier(), e.isAmbient(), e.hasParticles(), e.hasIcon()));
+                }
+            } finally { pl().allowBuff = false; }
+            Fx2.sphere(t.getBoundingBox().getCenter().toLocation(t.getWorld()), 0.9, 20, Fx2.trans(GOLD, WHITE, 1.2f));
+        }, dur);
         hurt(c, t, v(k + ".damage"));
         return true;
     }
@@ -646,7 +738,7 @@ final class Abilities {
         LivingEntity t = target(c.p, v(k + ".range"));
         if (t == null) return false;
         int dur = ticks(k + ".duration");
-        if (!pl().root(t, dur)) return true;
+        if (!pl().immobilize(t, dur)) return true;
         Consumer<Location> magma = Fx2.both(Fx2.trans(ORANGE, DARKRED, 1.6f), Fx2.sometimes(0.4, Fx2.pt(Particle.FLAME, 1, 0.05, 0.02)));
         snd(t.getLocation(), Sound.BLOCK_LAVA_POP, 1.5f, 0.6f);
         zone(dur, tick -> {
@@ -838,5 +930,5 @@ final class Flair {
         Fx2.ring(hc.clone().add(0, 0.6, 0), 0.7, 12, dust);
         Fx2.radial(hc, th.spark(), 30, 0.35);
         Fx2.p(hc, th.main(), 12, 0.4, 0.5, 0.4, 0.05);
-    }
+    }p
 }
